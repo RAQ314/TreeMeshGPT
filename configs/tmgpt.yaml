@@ -13,7 +13,7 @@ weight_decay: 0.
 max_grad_norm: 0.5
 dropout: 0.
 resume: null
-grad_accum_every: 1
+grad_accum_every: 16
 num_train_steps: 10000000000
 val_every: 200
 checkpoint_every: 2000

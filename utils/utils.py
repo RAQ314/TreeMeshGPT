@@ -162,3 +162,37 @@ def SaveAreaToRemeshInOBJ(iMesh, iBoundaryVertices, iOutputFileName, iSampledPoi
       f.write("\n# End of sampled points\n")
 
 
+def LoadAreaToRemeshFromOBJ(iInputFileName) :
+  """
+  Loads the area to remesh from an OBJ file.
+  
+  Parameters:
+  - iInputFileName: Input file name for the OBJ file.
+  
+  Returns:
+  - A tuple containing the Open3D TriangleMesh object, the boundary vertices, and the sampled points.
+  """
+  
+  mesh = o3d.io.read_triangle_mesh(iInputFileName)
+  
+  # Extract boundary vertices
+  boundaryVertices = []
+  sampledPoints = None
+
+  with open(iInputFileName, 'r') as f:
+    for line in f:
+      if line.startswith("l "):
+        boundaryVertices = list(map(int, line.strip().split()[1:]))
+        # Convert to zero-based indices
+        boundaryVertices = [v - 1 for v in boundaryVertices]
+      elif line.startswith("g sampled_points"):
+        # Read sampled points
+        readPoints=[]
+        for pointLine in f:
+          if pointLine.startswith("v "):
+            point = list(map(float, pointLine.strip().split()[1:]))
+            readPoints.append(point)
+        sampledPoints = o3d.geometry.PointCloud()
+        sampledPoints.points = o3d.utility.Vector3dVector(readPoints)
+
+  return mesh, boundaryVertices, sampledPoints

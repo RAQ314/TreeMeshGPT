@@ -90,9 +90,15 @@ def GenerateAreaToRemesh(iInputMesh, iTrianglesIndicesToRemove, iMaxRingSize = 1
   #--- Sample subMesh (optional)
   sampledPoints=o3d.geometry.PointCloud()
   if iNbSamples > 0 :
-    # Sample points on the mesh
-    sampledPoints = subMesh.sample_points_uniformly(number_of_points=iNbSamples)
-    print(f"Sampled {len(sampledPoints.points)} points on the submesh")
+    # # Sample points on the mesh
+    # sampledPoints = subMesh.sample_points_uniformly(number_of_points=iNbSamples)
+    # print(f"Sampled {len(sampledPoints.points)} points on the submesh")
+
+    # Sample points on triangles to remove
+    complementSubMesh, _, _ = CopyMesh(iInputMesh, iTrianglesIndicesToRemove)
+    sampledPoints = complementSubMesh.sample_points_uniformly(number_of_points=iNbSamples)
+    print(f"Sampled {len(sampledPoints.points)} points on the complement submesh")
+
 
   #--- Compute the boundary of the area to remesh in submesh
   trianglesToRemoveInSubMesh = [mapTriangles[triangleIndex] for triangleIndex in iTrianglesIndicesToRemove ]

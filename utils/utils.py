@@ -10,46 +10,50 @@ def ExtractRingsAroundTriangles(iInputMesh, iTrianglesList, iMaxRingSize=1) :
   Parameters:
   - iInputMesh: Open3D TriangleMesh object.
   - iTrianglesList: List of triangle indices to extract rings around.
-  - iMaxRingSize: Maximum size of the ring to extract.
+  - iMaxRingSize: Maximum size of the ring to extract, if -1 returns the whole mesh.
   
   Returns:
   - A set of triangle indices that form the ring around the specified triangles.
   """
-  # Create halfedge data structure
-  halfedgeMesh = o3d.geometry.HalfEdgeTriangleMesh.create_from_triangle_mesh(iInputMesh)
+  if iMaxRingSize== -1 :
+    # If max ring size is -1, return all triangles in the mesh
+    return set(range(len(iInputMesh.triangles)))
+  else :
+    # Create halfedge data structure
+    halfedgeMesh = o3d.geometry.HalfEdgeTriangleMesh.create_from_triangle_mesh(iInputMesh)
 
-  # Initialize set for triangles to keep
-  trianglesToKeep = set()
-  trianglesToKeep.update(iTrianglesList)
+    # Initialize set for triangles to keep
+    trianglesToKeep = set()
+    trianglesToKeep.update(iTrianglesList)
 
-  for ringSize in range(iMaxRingSize):
-    trianglesInCurrentArea = trianglesToKeep
-    trianglesInRing = set()
-    
-    # Iterate through each triangle index in the input list
-    for triangleIndex in trianglesInCurrentArea:
-      #Get all triangles around each triangle vertex
-      for triangleVertex in halfedgeMesh.triangles[triangleIndex]:
-        # Get the half-edges connected to the triangle vertex
-        halfEdgesAroundVertex = halfedgeMesh.ordered_half_edge_from_vertex[triangleVertex]
-        
-        for localHalfEdgeIndex in halfEdgesAroundVertex:
-          currentTriangleIndex = halfedgeMesh.half_edges[localHalfEdgeIndex].triangle_index
-          if not currentTriangleIndex in trianglesInCurrentArea:
-            trianglesInRing.add(currentTriangleIndex)
+    for ringSize in range(iMaxRingSize):
+      trianglesInCurrentArea = trianglesToKeep
+      trianglesInRing = set()
+      
+      # Iterate through each triangle index in the input list
+      for triangleIndex in trianglesInCurrentArea:
+        #Get all triangles around each triangle vertex
+        for triangleVertex in halfedgeMesh.triangles[triangleIndex]:
+          # Get the half-edges connected to the triangle vertex
+          halfEdgesAroundVertex = halfedgeMesh.ordered_half_edge_from_vertex[triangleVertex]
+          
+          for localHalfEdgeIndex in halfEdgesAroundVertex:
+            currentTriangleIndex = halfedgeMesh.half_edges[localHalfEdgeIndex].triangle_index
+            if not currentTriangleIndex in trianglesInCurrentArea:
+              trianglesInRing.add(currentTriangleIndex)
 
-          neighbourTriangleIndex = halfedgeMesh.half_edges[localHalfEdgeIndex].twin
-          if neighbourTriangleIndex== -1:
-            raise Exception("@@@@ Halfedge on boundary")
+            neighbourTriangleIndex = halfedgeMesh.half_edges[localHalfEdgeIndex].twin
+            if neighbourTriangleIndex== -1:
+              raise Exception("@@@@ Halfedge on boundary")
 
-          neighbourTriangleIndex = halfedgeMesh.half_edges[neighbourTriangleIndex].triangle_index
+            neighbourTriangleIndex = halfedgeMesh.half_edges[neighbourTriangleIndex].triangle_index
 
-          if not neighbourTriangleIndex in trianglesInCurrentArea:
-            trianglesInRing.add(neighbourTriangleIndex)
-    
-    trianglesToKeep.update(trianglesInRing)
-    
-  return trianglesToKeep
+            if not neighbourTriangleIndex in trianglesInCurrentArea:
+              trianglesInRing.add(neighbourTriangleIndex)
+      
+      trianglesToKeep.update(trianglesInRing)
+      
+    return trianglesToKeep
 
 def CopyMesh(iInputMesh, iTrianglesToCopy = None) :
   trianglesToCopy= iTrianglesToCopy if iTrianglesToCopy is not None else range(len(iInputMesh.triangles))
@@ -78,6 +82,19 @@ def CopyMesh(iInputMesh, iTrianglesToCopy = None) :
 
 
 def GenerateAreaToRemesh(iInputMesh, iTrianglesIndicesToRemove, iMaxRingSize = 1, iNbSamples = 0) :
+  """
+  Generates the area to remesh from a list of triangles indices to remove in a mesh.
+
+  Parameters:
+  - iInputMesh: Open3D TriangleMesh object.
+  - iTrianglesIndicesToRemove: List of triangle indices to remove.
+  - iMaxRingSize: Maximum size of the ring to extract, if -1 returns the complement of iTrianglesIndicesToRemove.
+  - iNbSamples: Number of points to sample on the area to remesh.
+
+  Returns:
+  - A tuple containing the Open3D TriangleMesh object, the boundary vertices, and the sampled points.
+  """
+  
   #--- Compute context area : 'iMaxRingSize' rings of triangles around the triangles to remove
   trianglesInContext = ExtractRingsAroundTriangles(iInputMesh, iTrianglesIndicesToRemove, iMaxRingSize)
   
@@ -90,14 +107,14 @@ def GenerateAreaToRemesh(iInputMesh, iTrianglesIndicesToRemove, iMaxRingSize = 1
   #--- Sample subMesh (optional)
   sampledPoints=o3d.geometry.PointCloud()
   if iNbSamples > 0 :
-    # # Sample points on the mesh
-    # sampledPoints = subMesh.sample_points_uniformly(number_of_points=iNbSamples)
-    # print(f"Sampled {len(sampledPoints.points)} points on the submesh")
+    # Sample points on the sub mesh (ie context + triangles to remove)
+    sampledPoints = subMesh.sample_points_uniformly(number_of_points=iNbSamples)
+    print(f"Sampled {len(sampledPoints.points)} points on the submesh")
 
-    # Sample points on triangles to remove
-    complementSubMesh, _, _ = CopyMesh(iInputMesh, iTrianglesIndicesToRemove)
-    sampledPoints = complementSubMesh.sample_points_uniformly(number_of_points=iNbSamples)
-    print(f"Sampled {len(sampledPoints.points)} points on the complement submesh")
+    # # Sample points on triangles to remove
+    # complementSubMesh, _, _ = CopyMesh(iInputMesh, iTrianglesIndicesToRemove)
+    # sampledPoints = complementSubMesh.sample_points_uniformly(number_of_points=iNbSamples)
+    # print(f"Sampled {len(sampledPoints.points)} points on the complement submesh")
 
 
   #--- Compute the boundary of the area to remesh in submesh

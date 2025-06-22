@@ -4,6 +4,7 @@ import random
 from scipy.spatial.transform import Rotation
 import open3d as o3d
 import trimesh
+import torch
 
 # Custom function to handle boolean arguments
 def str2bool(v):
@@ -40,7 +41,10 @@ def dequantize_verts_tensor(verts, n_bits=7):
     max_range = scale
     range_quantize = 2 ** n_bits - 1
 
-    verts = verts.float()
+    if torch.is_tensor(verts):
+        verts = verts.float()
+    else:
+        verts = np.asarray(verts).astype(np.float32)
     verts = verts * (max_range - min_range) / range_quantize + min_range
 
     return verts

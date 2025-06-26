@@ -6,3 +6,4 @@ output/
 *.pyc
 *.ply
 .vscode/
+*.bak

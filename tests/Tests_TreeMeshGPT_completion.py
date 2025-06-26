@@ -1,19 +1,17 @@
 import os, sys
 sys.path.insert(1, "/".join(os.path.realpath(__file__).split("/")[0:-2]))
 
-from concurrent.futures import *
 from multiprocessing import Process, Pipe, Queue
-import multiprocessing
 import numpy as np
 import open3d as o3d
 import torch
 from pathlib import Path
 from model.treemeshgpt_inference import TreeMeshGPT
-from utils.utils import GenerateAreaToRemesh, SaveAreaToRemeshInOBJ 
 from inference_completion import *
 import time
 import pandas as pd
 import datetime
+import random
 
 
 #--- Init
@@ -28,8 +26,14 @@ TORCH_DEVICE="cuda:1"
 
 def PerformCompletion(ioQueue, iMeshPath : str, iTriangleListToRemesh : list, iNbRingsAroundTrianglesToRemove, iTrialNumber : int, iKPILineToFill : list, iNbSamples = 8192, iDebugPrefixPath = "") :
 
+  #--- Init
+  random.seed(42)
+  torch.manual_seed(42)
+  np.random.seed(42)
+  o3d.utility.random.seed(42)
+
   #Set cuda device
-  torch.device(TORCH_DEVICE)
+  device=torch.device(TORCH_DEVICE)
 
   #--- Debug only
   tempMesh=o3d.io.read_triangle_mesh(iMeshPath)
@@ -46,14 +50,12 @@ def PerformCompletion(ioQueue, iMeshPath : str, iTriangleListToRemesh : list, iN
   iKPILineToFill.append(iTrialNumber)
 
   #--- Set up model
-  transformer = TreeMeshGPT(quant_bit = 7 if VERSION == "7bit" else 9, max_seq_len=13000) # can set higher max_seq_len if GPU is L4 or A100
+  transformer = TreeMeshGPT(quant_bit = 7 if VERSION == "7bit" else 9, max_seq_len=13000).to(device) # can set higher max_seq_len if GPU is L4 or A100
   transformer.load(CKPT_PATH)
-  accelerator = Accelerator(mixed_precision="fp16")
-  transformer = accelerator.prepare(transformer)
 
   #--- Complete submesh
   startTime=time.time()
-  completedMesh=CompleteMesh(transformer, accelerator, submesh, remeshBoundary, sampledPoints, iDebugPrefixPath)
+  completedMesh=CompleteMesh(transformer, device, submesh, remeshBoundary, sampledPoints, iDebugPrefixPath)
   endTime=time.time()
   elapsedTime=endTime-startTime
   iKPILineToFill.append(elapsedTime)
@@ -77,13 +79,18 @@ def PerformCompletion(ioQueue, iMeshPath : str, iTriangleListToRemesh : list, iN
   if isWatertight :
     iKPILineToFill.append(0)
   else :
-    tempHEMesh=o3d.geometry.HalfEdgeTriangleMesh.create_from_triangle_mesh(completedMesh)
-    
-    nbFreeEdges=0
-    for he in tempHEMesh.half_edges :
-      if he.twin==-1 : nbFreeEdges+=1
-    
-    iKPILineToFill.append(nbFreeEdges)
+    #Get number of boundary edges, easy to get from halfedge structure but an exception can be raised
+    #if the mesh is not manifold
+    try :
+      tempHEMesh=o3d.geometry.HalfEdgeTriangleMesh.create_from_triangle_mesh(completedMesh)
+      
+      nbFreeEdges=0
+      for he in tempHEMesh.half_edges :
+        if he.twin==-1 : nbFreeEdges+=1
+      
+      iKPILineToFill.append(nbFreeEdges)
+    except :
+      iKPILineToFill.append("NA")
 
   #Manifoldness
   iKPILineToFill.append(True if completedMesh.is_edge_manifold() else False)
@@ -116,6 +123,7 @@ def RunAllTests() :
 
 
   allCompletionsTests=[]
+  #allCompletionsTests.append(CompletionTestConfig("./demo/NewMesh1_Tri.obj", [[394]], [1], 3))
   allCompletionsTests.append(CompletionTestConfig("./demo/NewMesh1_Tri.obj", [[394], [174], [205], [275], [552], [85]], [1, 2, 3], 3))
   allCompletionsTests.append(CompletionTestConfig("./demo/NewMesh2_Tri.obj", [[242], [170], [276], [205], [45], [434]], [1, 2, 3], 3))
   allCompletionsTests.append(CompletionTestConfig("./demo/NewMesh3_Tri.obj", [[91], [41], [63], [52], [11], [137]], [1, 2, 3], 3))
@@ -125,12 +133,12 @@ def RunAllTests() :
   allCompletionsTests.append(CompletionTestConfig("./demo/128043_372dc2bb_0.obj", [[2001], [473], [1559], [1988], [1687]], [1, 2, 3], 3))
   allCompletionsTests.append(CompletionTestConfig("./demo/objaverse_pig_CC0_Decim_2k.obj", [[1129], [1602], [783], [268]], [1, 2, 3], 3))
 
+
   #--- Run tests
   runCounter=0
 
   for currentTest in allCompletionsTests :
-    print(f"Processing mesh : {currentTest.meshPath}", flush=True)
-    
+
     #Debug : Extract mesh name
     meshName, _=os.path.splitext(os.path.basename(currentTest.meshPath))
     debugPrefixPathBase="./output/"+meshName
@@ -139,6 +147,8 @@ def RunAllTests() :
       for currentRingSize in currentTest.listOfRingSizes :
         for trialNumber in range(currentTest.nbRunsPerTrial) :
 
+          print(f"Processing mesh : {currentTest.meshPath}", flush=True)
+          
           runCounter+=1
           debugPrefixPath=debugPrefixPathBase+"_run"+f"{runCounter:3}"
 
@@ -160,7 +170,7 @@ def RunAllTests() :
 
           else :
             subProcessQueue=Queue()
-            PerformCompletion(subProcessQueue, meshName, currentAreaToRemesh, currentRingSize, trialNumber, kpiLine, NB_SAMPLING_POINTS, debugPrefixPath)
+            PerformCompletion(subProcessQueue, currentTest.meshPath, currentAreaToRemesh, currentRingSize, trialNumber, kpiLine, NB_SAMPLING_POINTS, debugPrefixPath)
             kpiLine=subProcessQueue.get()
           
           #Fill dataframe

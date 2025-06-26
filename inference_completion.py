@@ -60,7 +60,7 @@ def GenerateMeshToCompleteFromPath(iMeshPath : str, iTriangleListToRemesh : list
     return GenerateMeshToComplete(mesh, iTriangleListToRemesh, iNbRingsAroundTrianglesToRemove, iNbSamples, iDebugPrefixPath)
 
 
-def CompleteMesh(iTransformer : TreeMeshGPT, accelerator : Accelerator,
+def CompleteMesh(iTransformer : TreeMeshGPT, device,
                  iSubMesh : o3d.geometry.TriangleMesh, iBoundaryVertices : list, iSupportPC : o3d.geometry.PointCloud, iDebugPrefixPath = "") :
     
     #--- Check number of faces
@@ -72,14 +72,15 @@ def CompleteMesh(iTransformer : TreeMeshGPT, accelerator : Accelerator,
 
     #--- Point cloud sampling structures
     pc_array = np.asarray(iSupportPC.points)
-    pc = torch.tensor(pc_array).unsqueeze(0).float().cuda()
+    pc = torch.tensor(pc_array).unsqueeze(0).float().to(device)
 
     #--- Halfedge mesh
     halfEdgeTriangularMesh=o3d.geometry.HalfEdgeTriangleMesh.create_from_triangle_mesh(iSubMesh)
 
     #--- Generate completion
     t = time.time()
-    with accelerator.autocast(), torch.no_grad():
+    #with torch.autocast(device_type=“cuda”, dtype=torch.float16), torch.no_grad():
+    with torch.autocast(device_type="cuda", dtype=torch.float16), torch.no_grad():
         out_faces = iTransformer.generate_completion(halfEdgeTriangularMesh, iBoundaryVertices, pc, n = 0.25)
         #out_faces = iTransformer.generate_completion(halfEdgeTriangularMesh, remeshBoundary, pc, n = 0.0)
     elapsedTime=t = time.time()-t

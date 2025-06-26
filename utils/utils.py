@@ -3,7 +3,7 @@ import numpy as np
 import open3d as o3d
 import colorsys
 from fns import center_vertices, normalize_vertices_scale, quantize_verts, dequantize_verts
-
+from scipy.spatial import distance
 
 
 def ExtractRingsAroundTriangles(iInputMesh, iTrianglesList, iMaxRingSize=1) :
@@ -341,15 +341,31 @@ def NormalizeSampleAndGridMesh(iInputMesh : o3d.geometry.TriangleMesh, iListOfTr
 
   #--- Track triangles after gridding
   newListOfTrianglesToTrack=[]
+  
+  griddedVertices=np.asarray(griddedMesh.vertices)
+  griddedTriangles=np.asarray(griddedMesh.triangles)
 
-  griddedMeshForRC=o3d.t.geometry.TriangleMesh.from_legacy(griddedMesh)
-  scene = o3d.t.geometry.RaycastingScene()
-  scene.add_triangles(griddedMeshForRC)
-  for triangleIndex, triangleCenter in mapTriangleCenter.items() :
-    query_point = o3d.core.Tensor([triangleCenter], dtype=o3d.core.Dtype.Float32)
-    query_result= scene.compute_closest_points(query_point)
-    closestTriangleIndex=query_result['primitive_ids'][0].item()
-    newListOfTrianglesToTrack.append(closestTriangleIndex)
+  for triangleCenter in mapTriangleCenter.values() :
+    closestGriddedTriangleIndex=-1
+    closestGriddedTriangleSquareDist=np.inf
+
+    for griddedTriangleIndex in range(len(griddedTriangles)) :
+      griddedTriangleCenter=np.mean(griddedVertices[griddedTriangles[griddedTriangleIndex]], axis=0)
+      squareDistance=distance.sqeuclidean(griddedTriangleCenter, triangleCenter)
+      if squareDistance < closestGriddedTriangleSquareDist :
+        closestGriddedTriangleSquareDist=squareDistance
+        closestGriddedTriangleIndex=griddedTriangleIndex
+    if closestGriddedTriangleIndex!=-1 :
+      newListOfTrianglesToTrack.append(closestGriddedTriangleIndex)
+
+  # griddedMeshForRC=o3d.t.geometry.TriangleMesh.from_legacy(griddedMesh)
+  # scene = o3d.t.geometry.RaycastingScene()
+  # scene.add_triangles(griddedMeshForRC)
+  # for triangleIndex, triangleCenter in mapTriangleCenter.items() :
+  #   query_point = o3d.core.Tensor([triangleCenter], dtype=o3d.core.Dtype.Float32)
+  #   query_result= scene.compute_closest_points(query_point)
+  #   closestTriangleIndex=query_result['primitive_ids'][0].item()
+  #   newListOfTrianglesToTrack.append(closestTriangleIndex)
 
   #newListOfTrianglesToTrack=iListOfTrianglesToTrack
 

@@ -23,6 +23,11 @@ CKPT_PATH = "./checkpoints/treemeshgpt_7bit.pt"
 
 TORCH_DEVICE="cuda:1"
 
+NB_TRIALS=1
+
+BOUNDARY_ALIGNEMENT_VECTOR=None
+#BOUNDARY_ALIGNEMENT_VECTOR=(0, 0, 1)
+
 
 def PerformCompletion(ioQueue, iMeshPath : str, iTriangleListToRemesh : list, iNbRingsAroundTrianglesToRemove, iTrialNumber : int, iKPILineToFill : list, iNbSamples = 8192, iDebugPrefixPath = "") :
 
@@ -44,7 +49,8 @@ def PerformCompletion(ioQueue, iMeshPath : str, iTriangleListToRemesh : list, iN
   iKPILineToFill.append(iTriangleListToRemesh[0])
 
   #--- Generate submesh to complete
-  submesh, remeshBoundary, sampledPoints=GenerateMeshToCompleteFromPath(iMeshPath, iTriangleListToRemesh, iNbRingsAroundTrianglesToRemove, iNbSamples=iNbSamples, iDebugPrefixPath=iDebugPrefixPath)
+  submesh, remeshBoundary, sampledPoints=GenerateMeshToCompleteFromPath(iMeshPath, iTriangleListToRemesh, iNbRingsAroundTrianglesToRemove,
+                                                                        iNbSamples=iNbSamples, iAlignBoundaryWithVector=BOUNDARY_ALIGNEMENT_VECTOR, iDebugPrefixPath=iDebugPrefixPath)
   nbRemovedTriangles=nbInputTriangles-len(submesh.triangles)
   iKPILineToFill.append(nbRemovedTriangles)
   iKPILineToFill.append(iTrialNumber)
@@ -123,15 +129,17 @@ def RunAllTests() :
 
 
   allCompletionsTests=[]
-  #allCompletionsTests.append(CompletionTestConfig("./demo/NewMesh1_Tri.obj", [[394]], [1], 3))
-  allCompletionsTests.append(CompletionTestConfig("./demo/NewMesh1_Tri.obj", [[394], [174], [205], [275], [552], [85]], [1, 2, 3], 3))
-  allCompletionsTests.append(CompletionTestConfig("./demo/NewMesh2_Tri.obj", [[242], [170], [276], [205], [45], [434]], [1, 2, 3], 3))
-  allCompletionsTests.append(CompletionTestConfig("./demo/NewMesh3_Tri.obj", [[91], [41], [63], [52], [11], [137]], [1, 2, 3], 3))
-  allCompletionsTests.append(CompletionTestConfig("./demo/115603_50901239_5.obj", [[662], [1986], [217]], [1, 2, 3], 3))
-  allCompletionsTests.append(CompletionTestConfig("./demo/115603_50901239_23.obj", [[1981], [574]], [1, 2, 3], 3))
-  allCompletionsTests.append(CompletionTestConfig("./demo/115615_d06fa061_6.obj", [[484], [1179], [1508]], [1, 2, 3], 3))
-  allCompletionsTests.append(CompletionTestConfig("./demo/128043_372dc2bb_0.obj", [[2001], [473], [1559], [1988], [1687]], [1, 2, 3], 3))
-  allCompletionsTests.append(CompletionTestConfig("./demo/objaverse_pig_CC0_Decim_2k.obj", [[1129], [1602], [783], [268]], [1, 2, 3], 3))
+  #allCompletionsTests.append(CompletionTestConfig("./demo/NewMesh3_Tri.obj", [[91]], [2], NB_TRIALS))
+  #allCompletionsTests.append(CompletionTestConfig("./demo/NewMesh3_Tri.obj", [[91], [41], [63], [52], [11], [137]], [1], NB_TRIALS))
+  
+  allCompletionsTests.append(CompletionTestConfig("./demo/NewMesh1_Tri.obj", [[394], [174], [205], [275], [552], [85]], [1, 2, 3], NB_TRIALS))
+  allCompletionsTests.append(CompletionTestConfig("./demo/NewMesh2_Tri.obj", [[242], [170], [276], [205], [45], [434]], [1, 2, 3], NB_TRIALS))
+  allCompletionsTests.append(CompletionTestConfig("./demo/NewMesh3_Tri.obj", [[91], [41], [63], [52], [11], [137]], [1, 2, 3], NB_TRIALS))
+  allCompletionsTests.append(CompletionTestConfig("./demo/115603_50901239_5.obj", [[662], [1986], [217], [171, 189, 1565, 1601, 657, 596], [631, 632]], [1, 2, 3], NB_TRIALS))
+  allCompletionsTests.append(CompletionTestConfig("./demo/115603_50901239_23.obj", [[1981], [574], [1618], [1599]], [1, 2, 3], NB_TRIALS))
+  allCompletionsTests.append(CompletionTestConfig("./demo/115615_d06fa061_6.obj", [[484], [1179], [1508], [58], [1655, 1121]], [1, 2, 3], NB_TRIALS))
+  allCompletionsTests.append(CompletionTestConfig("./demo/128043_372dc2bb_0.obj", [[2001], [473], [1559], [1988], [1687], [1146, 1618]], [1, 2, 3], NB_TRIALS))
+  allCompletionsTests.append(CompletionTestConfig("./demo/objaverse_pig_CC0_Decim_2k.obj", [[1129], [1602], [783], [268]], [1, 2, 3], NB_TRIALS))
 
 
   #--- Run tests

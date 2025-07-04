@@ -15,6 +15,21 @@ from model.pc_encoder import CloudEncoder
 import open3d as o3d
 
 
+ENABLE_DEBUG_SaveCreatedFaces=False
+
+
+def DEBUG_SaveCreatedFaces(iFilePath, facesList) :
+    if ENABLE_DEBUG_SaveCreatedFaces :
+      with open(iFilePath, "w") as debugFile :
+          vertexCounter=0
+          for face in facesList :
+              debugFile.write(f"v {face[0][0]} {face[0][1]} {face[0][2]}\n")
+              debugFile.write(f"v {face[1][0]} {face[1][1]} {face[1][2]}\n")
+              debugFile.write(f"v {face[2][0]} {face[2][1]} {face[2][2]}\n")
+              debugFile.write(f"f {vertexCounter+1} {vertexCounter+2} {vertexCounter+3}\n")
+              vertexCounter+=3
+
+
 def get_positional_encoding(L, D, device='cpu'):
     # Create a tensor to hold the positional encodings
     position = torch.arange(L, dtype=torch.float32, device=device).unsqueeze(1)
@@ -111,7 +126,7 @@ class TreeMeshGPT(Module):
             node = {}
             node['edges'] = edges
             stack.append(node)
-            
+        
         def initialize_connected_component(edges, acc_fea, pred, p, cache, first, t_init=1):
             
             # Step 0
@@ -226,6 +241,7 @@ class TreeMeshGPT(Module):
                 p += 1
                 
                 if xyz_res.sum() != -3 and xyz_res.sum() != -6:
+                    DEBUG_SaveCreatedFaces(f"./output/DEBUG_SaveCreatedFaces_{len(prev_faces):05}.obj", prev_faces)
                     add_stack(edges=[xyz_res, cur_node['edges'][1]]) # L
                     add_stack(edges=[cur_node['edges'][0], xyz_res]) # R
 
@@ -356,7 +372,6 @@ class TreeMeshGPT(Module):
         sampledPoints,
         n = 0,
     ):
-        
         device = self.sos_emb.device
         self.n = -n        
 
@@ -395,175 +410,96 @@ class TreeMeshGPT(Module):
             else:
                 return False
 
-        def getNextVertexInTriangle(iHalfEdge, iTriangleIndex) :
+        def getNextVertexInTriangle(iHalfEdgeVertexIndices, iTriangleIndex) :
             triangleVerticesIndices=halfEdgeTriangularMesh.triangles[iTriangleIndex]
-            if triangleVerticesIndices[0]!= iHalfEdge.vertex_indices[0] and triangleVerticesIndices[0] != iHalfEdge.vertex_indices[1]:
+            if triangleVerticesIndices[0]!= iHalfEdgeVertexIndices[0] and triangleVerticesIndices[0] != iHalfEdgeVertexIndices[1]:
                 return triangleVerticesIndices[0]
-            elif triangleVerticesIndices[1]!= iHalfEdge.vertex_indices[0] and triangleVerticesIndices[1] != iHalfEdge.vertex_indices[1]:
+            elif triangleVerticesIndices[1]!= iHalfEdgeVertexIndices[0] and triangleVerticesIndices[1] != iHalfEdgeVertexIndices[1]:
                 return triangleVerticesIndices[1]
             else :
                 return triangleVerticesIndices[2]
 
-        def add_stack(edges, iAppendAtTheEnd=True):
+        #Quantize existing vertices
+        quantizedVertices=quantize_verts(np.asarray(halfEdgeTriangularMesh.vertices), self.quant_bit)
+        def getQuantizedVertexCoordsTensor(iVertexIndex) :
+            xyz=torch.from_numpy(quantizedVertices[iVertexIndex]).to(device)
+            return xyz.unsqueeze(0)
+
+
+        def add_stack(edges, iHEIndex : int = -1, iIsOnBoundaryToFill : bool = True, iAppendAtTheEnd=True):
             node = {}
             node['edges'] = edges
+            node['boundaryToFill'] = iIsOnBoundaryToFill
+            node['he_index']=iHEIndex
             if iAppendAtTheEnd :
                 stack.append(node)
             else :
                 stack.insert(0, node)
-
+        
         def initialize_with_existing_mesh(edges, acc_fea, pred, p, cache, first, t_init=1):
-            
-            print("Starting initialization with existing mesh...")
-
-            #--- RAQ : start prepare list of half edges for initialisation
-            #Quantize vertices
-            quantizedVertices=quantize_verts(np.asarray(halfEdgeTriangularMesh.vertices), self.quant_bit)
-
-            def getQuantizedVertexCoordsTensor(iVertexIndex) :
-                xyz=torch.from_numpy(quantizedVertices[iVertexIndex]).to(device)
-                return xyz.unsqueeze(0)
-
             #Get the first he
             seed_he=GetSeedHE()
-          
-            processedHalfEdges = set()
-            stackOfExistingHE=[seed_he]
-            stackOfBoundaryEdgesToFill=[]
-            while stackOfExistingHE :
-                print(f"Stack size: {len(stackOfExistingHE)}")
-                
-                he = stackOfExistingHE.pop()
-                if he in processedHalfEdges:
-                    continue
+            
+            # Step 0
+            fea = self.sos() + pe(p)
+            acc_fea = pack([acc_fea, fea], 'b * d')[0]
+            xyz_0, eos, cache = self.predict(acc_fea, t=t_init, init_mask=False, first=first, kv_cache=cache) #RAQ : added line
+            xyz_0=getQuantizedVertexCoordsTensor(seed_he.vertex_indices[0])
+            pred = pack([pred, xyz_0], 'b * d')[0]
+            p += 1
+            edges = torch.cat([edges, torch.cat([xyz_0, pad], dim=-1)], dim=0)
 
-                if len(processedHalfEdges)==0 :
-                    #--- Process first edge -> its vertices + edge itself
-                    processedHalfEdges.add(he)
+            # Step 1
+            fea = self.sos1(xyz_0) + pe(p)
+            acc_fea = pack([acc_fea, fea], 'b * d')[0]
+            xyz_1, eos, cache = self.predict(acc_fea, t=t_init, init_mask=False, first=first, kv_cache=cache) #RAQ : added line
+            xyz_1=getQuantizedVertexCoordsTensor(seed_he.vertex_indices[1])
+            pred = pack([pred, xyz_1], 'b * d')[0]
+            p += 1
+            edges = torch.cat([edges, torch.cat([xyz_0, xyz_1], dim=-1)], dim=0)
 
-                    # Step 0
-                    fea = self.sos() + pe(p)
-                    acc_fea = pack([acc_fea, fea], 'b * d')[0]
-                    xyz_0, eos, cache = self.predict(acc_fea, t=t_init, init_mask=False, first=first, kv_cache=cache) #RAQ : added line
-                    xyz_0=getQuantizedVertexCoordsTensor(he.vertex_indices[0])
-                    pred = pack([pred, xyz_0], 'b * d')[0]
-                    p += 1
-                    edges = torch.cat([edges, torch.cat([xyz_0, pad], dim=-1)], dim=0)
+            #Add current halfedge in the stack, its twin will be popped out later
+            if seed_he.twin != -1:
+                add_stack(edges=[getQuantizedVertexCoordsTensor(seed_he.vertex_indices[0]), getQuantizedVertexCoordsTensor(seed_he.vertex_indices[1])],
+                          iHEIndex=seed_he.twin, iIsOnBoundaryToFill=False)
+            elif isHalfEdgeOnBoundaryToFill(seed_he):
+                add_stack(edges=[getQuantizedVertexCoordsTensor(seed_he.vertex_indices[0]), getQuantizedVertexCoordsTensor(seed_he.vertex_indices[1])],
+                          iHEIndex=-1, iIsOnBoundaryToFill=True)
 
-                    # Step 1
-                    fea = self.sos1(xyz_0) + pe(p)
-                    acc_fea = pack([acc_fea, fea], 'b * d')[0]
-                    xyz_1, eos, cache = self.predict(acc_fea, t=t_init, init_mask=False, first=first, kv_cache=cache) #RAQ : added line
-                    xyz_1=getQuantizedVertexCoordsTensor(he.vertex_indices[1])
-                    pred = pack([pred, xyz_1], 'b * d')[0]
-                    p += 1
-                    edges = torch.cat([edges, torch.cat([xyz_0, xyz_1], dim=-1)], dim=0)
+            #Infer v2 related to he v0 -> v1
+            # Step 2
+            fea = self.encode_edge(xyz_0, xyz_1) + pe(p)
+            acc_fea = pack([acc_fea, fea], 'b * d')[0]
+            xyz_2, eos, cache = self.predict(acc_fea, t=t_init, init_mask=False, kv_cache=cache) #RAQ : added line
+            xyz_2=getQuantizedVertexCoordsTensor(getNextVertexInTriangle(seed_he.vertex_indices, seed_he.triangle_index))
+            pred = pack([pred, xyz_2], 'b * d')[0]
+            p += 1
 
-                    #Add current halfedge in the stack, its twin will be popped out later
-                    if he.twin != -1:
-                        stackOfExistingHE.append(halfEdgeTriangularMesh.half_edges[he.twin])
+            #TODO RAQ : check he and he.next are chained
+            
+            #nextHE : next half-edge, should be v1 -> v2
+            nextHE=halfEdgeTriangularMesh.half_edges[seed_he.next]
 
-                    if he.twin == -1:
-                        if isHalfEdgeOnBoundaryToFill(he):
-                            #Add in stack of edges to infer
-                            add_stack(edges=[getQuantizedVertexCoordsTensor(he.vertex_indices[0]), getQuantizedVertexCoordsTensor(he.vertex_indices[1])])
-                            #stackOfBoundaryEdgesToFill.append((he.vertex_indices[0], he.vertex_indices[1]))
-                    else :
-                        stackOfExistingHE.append(halfEdgeTriangularMesh.half_edges[he.twin])
-
-                    #Infer v2 related to he v0 -> v1
-                    # Step 2
-                    fea = self.encode_edge(xyz_0, xyz_1) + pe(p)
-                    acc_fea = pack([acc_fea, fea], 'b * d')[0]
-                    xyz_2, eos, cache = self.predict(acc_fea, t=t_init, init_mask=False, kv_cache=cache) #RAQ : added line
-                    xyz_2=getQuantizedVertexCoordsTensor(getNextVertexInTriangle(he, he.triangle_index))
-                    pred = pack([pred, xyz_2], 'b * d')[0]
-                    p += 1
-
-                    #TODO RAQ : check he and he.next are chained
-                    #nextHE : next half-edge, should be v0 -> v1
-                    nextHE=halfEdgeTriangularMesh.half_edges[he.next]
-                    if nextHE.twin==-1:
-                        if isHalfEdgeOnBoundaryToFill(nextHE):
-                            #Add in stack of edges to infer
-                            add_stack(edges=[getQuantizedVertexCoordsTensor(nextHE.vertex_indices[0]), getQuantizedVertexCoordsTensor(nextHE.vertex_indices[1])]) # L
-                            #stackOfBoundaryEdgesToFill.append((nextHE.vertex_indices[0], nextHE.vertex_indices[1]))
-                        processedHalfEdges.add(nextHE)
-                    elif not nextHE in processedHalfEdges:
-                      stackOfExistingHE.append(halfEdgeTriangularMesh.half_edges[nextHE.twin]) 
-                    
-                    #nextNextHE : next-next half-edge, should be v1 -> v2
-                    nextNextHE=halfEdgeTriangularMesh.half_edges[nextHE.next]
-                    if nextNextHE.twin==-1:
-                        if isHalfEdgeOnBoundaryToFill(nextNextHE):
-                            #Add in stack of edges to infer
-                            add_stack(edges=[getQuantizedVertexCoordsTensor(nextNextHE.vertex_indices[0]), getQuantizedVertexCoordsTensor(nextNextHE.vertex_indices[1])]) # R
-                            #stackOfBoundaryEdgesToFill.append((nextNextHE.vertex_indices[0], nextNextHE.vertex_indices[1]))
-                        processedHalfEdges.add(nextNextHE)
-                    elif not nextNextHE in processedHalfEdges:
-                      stackOfExistingHE.append(halfEdgeTriangularMesh.half_edges[nextNextHE.twin])
-                
-                else :
-                
-                    #--- Process other edges
-                    processedHalfEdges.add(he)
-
-                    cur_edges = torch.cat([getQuantizedVertexCoordsTensor(he.vertex_indices[0]), getQuantizedVertexCoordsTensor(he.vertex_indices[1])], dim=-1)
-
-                    prev_faces = torch.cat([edges.unsqueeze(0), pred], dim=-1).reshape(-1, 3, 3)
-                    face_mask = (prev_faces != -1).all(dim=(1, 2))
-                    prev_faces = prev_faces[face_mask]
-                
-                    edges = torch.cat([edges, cur_edges], dim=0)
-                    fea = self.encode_edge(getQuantizedVertexCoordsTensor(he.vertex_indices[0]), getQuantizedVertexCoordsTensor(he.vertex_indices[1])) + pe(p)
-                    acc_fea = pack([acc_fea, fea], 'b * d')[0] 
-
-                    te = self.adjust_temperature(len(stack))
-                    xyz_res, eos, cache = self.predict(acc_fea, t = te, kv_cache = cache) #RAQ : added line
-                    xyz_res=getQuantizedVertexCoordsTensor(getNextVertexInTriangle(he, he.triangle_index))
-
-                    cur_face = torch.cat([cur_edges, xyz_res], dim=-1).reshape(-1, 3, 3)[0]
-                    exists = self.check_duplicate(prev_faces, cur_face)
-                    
-                    if exists and len(stackOfExistingHE) > 0:
-                        xyz_res = torch.tensor([-1, -1, -1], device=fea.device).unsqueeze(0)
-                    else:
-                        pass
-                    
-                    pred = pack([pred, xyz_res], 'b * d')[0]
-                    p += 1
-
-                    nextHE=halfEdgeTriangularMesh.half_edges[he.next] #next half-edge
-                    if nextHE.twin==-1:
-                        if isHalfEdgeOnBoundaryToFill(nextHE):
-                            #Add in stack of edges to infer
-                            add_stack(edges=[getQuantizedVertexCoordsTensor(nextHE.vertex_indices[0]), getQuantizedVertexCoordsTensor(nextHE.vertex_indices[1])]) # L
-                            #stackOfBoundaryEdgesToFill.append((nextHE.vertex_indices[0], nextHE.vertex_indices[1]))
-                        processedHalfEdges.add(nextHE)
-                    elif not nextHE in processedHalfEdges:
-                      stackOfExistingHE.append(halfEdgeTriangularMesh.half_edges[nextHE.twin]) 
-                    
-                    nextNextHE=halfEdgeTriangularMesh.half_edges[nextHE.next] #next-next half-edge
-                    if nextNextHE.twin==-1:
-                        if isHalfEdgeOnBoundaryToFill(nextNextHE):
-                            #Add in stack of edges to infer
-                            add_stack(edges=[getQuantizedVertexCoordsTensor(nextNextHE.vertex_indices[0]), getQuantizedVertexCoordsTensor(nextNextHE.vertex_indices[1])]) # R
-                            #stackOfBoundaryEdgesToFill.append((nextNextHE.vertex_indices[0], nextNextHE.vertex_indices[1]))
-                        processedHalfEdges.add(nextNextHE)
-                    elif not nextNextHE in processedHalfEdges:
-                      stackOfExistingHE.append(halfEdgeTriangularMesh.half_edges[nextNextHE.twin])  
-          
-            # #Sort boundary edges to fill
-            # #stackOfBoundaryEdgesToFill.sort(reverse=True) #Should be True
-            # for boundaryEdge in stackOfBoundaryEdgesToFill:
-            #     #Add in stack of edges to infer by inverting the previous order such as the first edge to process is the last in the stack (ie the 1st to pop out)
-            #     add_stack(edges=[getQuantizedVertexCoordsTensor(boundaryEdge[0]), getQuantizedVertexCoordsTensor(boundaryEdge[1])], iAppendAtTheEnd=False)
-
-            print("End initialization with existing mesh")
+            #nextNextHE : next-next half-edge, should be v2 -> v0
+            nextNextHE=halfEdgeTriangularMesh.half_edges[nextHE.next]
+            
+            if nextNextHE.twin != -1:
+                add_stack(edges=[getQuantizedVertexCoordsTensor(nextNextHE.vertex_indices[0]), getQuantizedVertexCoordsTensor(nextNextHE.vertex_indices[1])],
+                          iHEIndex=nextNextHE.twin, iIsOnBoundaryToFill=False)
+            elif isHalfEdgeOnBoundaryToFill(nextNextHE):
+                add_stack(edges=[getQuantizedVertexCoordsTensor(nextNextHE.vertex_indices[0]), getQuantizedVertexCoordsTensor(nextNextHE.vertex_indices[1])],
+                          iHEIndex=-1, iIsOnBoundaryToFill=True)
+                        
+            if nextHE.twin != -1:
+                add_stack(edges=[getQuantizedVertexCoordsTensor(nextHE.vertex_indices[0]), getQuantizedVertexCoordsTensor(nextHE.vertex_indices[1])],
+                          iHEIndex=nextHE.twin, iIsOnBoundaryToFill=False)
+            elif isHalfEdgeOnBoundaryToFill(nextHE):
+                add_stack(edges=[getQuantizedVertexCoordsTensor(nextHE.vertex_indices[0]), getQuantizedVertexCoordsTensor(nextHE.vertex_indices[1])],
+                          iHEIndex=-1, iIsOnBoundaryToFill=True)
 
             return edges, acc_fea, pred, p, cache, eos, first
-            #--- RAQ : end
-                
+
+
         dim = self.dim  
         pad = torch.tensor([[-1 ,-1, -1]], device = device)
         edges = torch.empty((0, 6), device = device).long()  
@@ -596,17 +532,12 @@ class TreeMeshGPT(Module):
         self.n += n
         stack = [] 
         edges = torch.cat([edges, edge_pad], dim=0)             
-        #edges, acc_fea, pred, p, cache, eos, first = initialize_connected_component(edges, acc_fea, pred, p, cache, first, t_init = 1)
         edges, acc_fea, pred, p, cache, eos, first = initialize_with_existing_mesh(edges, acc_fea, pred, p, cache, first, t_init = 1)
-        nbBoundaryEdgesToFill=len(stack)
 
         while stack and pred.shape[1] < max_seq:
             cur_node = stack.pop()
             cur_edges = torch.cat([cur_node['edges'][1], cur_node['edges'][0]], dim=-1)
-            if nbBoundaryEdgesToFill > 0:
-                nbBoundaryEdgesToFill -= 1
-                if nbBoundaryEdgesToFill==0 : print("All imposed boundary edges processed !")
-            
+
             prev_faces = torch.cat([edges.unsqueeze(0), pred], dim=-1).reshape(-1, 3, 3)
             face_mask = (prev_faces != -1).all(dim=(1, 2))
             prev_faces = prev_faces[face_mask]
@@ -615,53 +546,100 @@ class TreeMeshGPT(Module):
             fea = self.encode_edge(cur_node['edges'][1], cur_node['edges'][0]) + pe(p)
             acc_fea = pack([acc_fea, fea], 'b * d')[0]            
                 
-            te = self.adjust_temperature(len(stack))        
-            xyz_res, eos, cache = self.predict(acc_fea, t = te, kv_cache = cache)
-            
-            if xyz_res.sum() != -3:
-                cur_face = torch.cat([cur_edges, xyz_res], dim=-1).reshape(-1, 3, 3)[0]
-                exists = self.check_duplicate(prev_faces, cur_face)
+            te = self.adjust_temperature(len(stack))   
+
+            if cur_node['boundaryToFill'] :
+              #--- Edge of boundary to fill
+              xyz_res, eos, cache = self.predict(acc_fea, t = te, kv_cache = cache)
+              
+              if xyz_res.sum() != -3:
+                  cur_face = torch.cat([cur_edges, xyz_res], dim=-1).reshape(-1, 3, 3)[0]
+                  exists = self.check_duplicate(prev_faces, cur_face)
+                  
+                  if exists and len(stack) > 0:
+                      xyz_res = torch.tensor([-1, -1, -1], device=fea.device).unsqueeze(0)
+                  else:
+                      tt = 0.5
+                      maxNbLoops=10*len(stack)
+                      loopCounter=0
+                      while exists:
+                          xyz_res, eos, cache_inloop = self.predict(acc_fea, t = tt, kv_cache = cache)
+                          cur_face = torch.cat([cur_edges, xyz_res], dim=-1).reshape(-1, 3, 3)[0]
+                          exists = self.check_duplicate(prev_faces, cur_face)
+                          tt += 0.1
+                          
+                          if not exists:
+                              cache = cache_inloop
+                          # else :
+                          #     loopCounter+=1
+                          #     if loopCounter>=maxNbLoops :
+                          #         eos=True
+                          #         break
                 
-                if exists and len(stack) > 0:
-                    xyz_res = torch.tensor([-1, -1, -1], device=fea.device).unsqueeze(0)
-                else:
-                    tt = 0.5
-                    maxNbLoops=10*len(stack)
-                    loopCounter=0
-                    while exists:
-                        xyz_res, eos, cache_inloop = self.predict(acc_fea, t = tt, kv_cache = cache)
-                        cur_face = torch.cat([cur_edges, xyz_res], dim=-1).reshape(-1, 3, 3)[0]
-                        exists = self.check_duplicate(prev_faces, cur_face)
-                        tt += 0.1
-                        
-                        if not exists:
-                            cache = cache_inloop
-                        else :
-                            loopCounter+=1
-                            if loopCounter>=maxNbLoops :
-                                eos=True
-                                break
-                            
-                        
+              if xyz_res.sum() != -3 and xyz_res.sum() != -6:
+                  #DEBUG_SaveCreatedFaces(f"./output/DEBUG_SaveCreatedFacesCompletion_{len(prev_faces):05}_Generated.obj", prev_faces)
+
+                  add_stack(edges=[xyz_res, cur_node['edges'][1]]) # L
+                  add_stack(edges=[cur_node['edges'][0], xyz_res]) # R
+
+            else :
+                #--- Existing half-edge with valid triangle
+                currenHE=halfEdgeTriangularMesh.half_edges[cur_node['he_index']]
+                xyz_res, eos, cache = self.predict(acc_fea, t = te, kv_cache = cache) #RAQ : added line
+
+                if xyz_res.sum() != -3 and xyz_res.sum() != -6:
+                  xyz_res=getQuantizedVertexCoordsTensor(getNextVertexInTriangle(currenHE.vertex_indices, currenHE.triangle_index))
+
+                  cur_face = torch.cat([cur_edges, xyz_res], dim=-1).reshape(-1, 3, 3)[0]
+                  exists = self.check_duplicate(prev_faces, cur_face)
+                  
+                  if exists and len(stack) > 0:
+                      xyz_res = torch.tensor([-1, -1, -1], device=fea.device).unsqueeze(0)
+                  else:
+                      pass
+                  
+                  # DEBUG_SaveCreatedFaces(f"./output/DEBUG_SaveCreatedFacesCompletion_{len(prev_faces):05}_Generated.obj", prev_faces)
+
+                  nextHE=halfEdgeTriangularMesh.half_edges[currenHE.next] #next half-edge
+                  nextNextHE=halfEdgeTriangularMesh.half_edges[nextHE.next] #next-next half-edge
+
+                  if nextNextHE.twin != -1:
+                      add_stack(edges=[getQuantizedVertexCoordsTensor(nextNextHE.vertex_indices[0]), getQuantizedVertexCoordsTensor(nextNextHE.vertex_indices[1])],
+                                iHEIndex=nextNextHE.twin, iIsOnBoundaryToFill=False) #Should be iIsOnBoundaryToFill=False
+                  elif isHalfEdgeOnBoundaryToFill(nextNextHE):
+                      add_stack(edges=[getQuantizedVertexCoordsTensor(nextNextHE.vertex_indices[0]), getQuantizedVertexCoordsTensor(nextNextHE.vertex_indices[1])],
+                                iHEIndex=-1, iIsOnBoundaryToFill=True)
+                              
+                  if nextHE.twin != -1:
+                      add_stack(edges=[getQuantizedVertexCoordsTensor(nextHE.vertex_indices[0]), getQuantizedVertexCoordsTensor(nextHE.vertex_indices[1])],
+                                iHEIndex=nextHE.twin, iIsOnBoundaryToFill=False) #Should be iIsOnBoundaryToFill=False
+                  elif isHalfEdgeOnBoundaryToFill(nextHE):
+                      add_stack(edges=[getQuantizedVertexCoordsTensor(nextHE.vertex_indices[0]), getQuantizedVertexCoordsTensor(nextHE.vertex_indices[1])],
+                                iHEIndex=-1, iIsOnBoundaryToFill=True)
+
             sys.stdout.write(f"\rSequence length: {pred.shape[1]}/{max_seq} | Stack length: {len(stack):<4}")
             sys.stdout.flush()
             pred = pack([pred, xyz_res], 'b * d')[0]
             p += 1
-            
-            if xyz_res.sum() != -3 and xyz_res.sum() != -6:
-                #appendAtTheEnd=False if nbBoundaryEdgesToFill > 0 else True
-                appendAtTheEnd=True
-                add_stack(edges=[xyz_res, cur_node['edges'][1]], iAppendAtTheEnd=appendAtTheEnd) # L
-                add_stack(edges=[cur_node['edges'][0], xyz_res], iAppendAtTheEnd=appendAtTheEnd) # R
 
+            #Debug : save created faces at current step
+            mustDebug=True
+            if mustDebug :
+                debug_prev_faces = torch.cat([edges.unsqueeze(0), pred], dim=-1).reshape(-1, 3, 3)
+                debug_face_mask = (debug_prev_faces != -1).all(dim=(1, 2))
+                debug_prev_faces = debug_prev_faces[debug_face_mask]
+                prefix="Generated" if cur_node['boundaryToFill'] else "Existing"
+                DEBUG_SaveCreatedFaces(f"./output/DEBUG_SaveCreatedFacesCompletion_{len(prev_faces):05}_{prefix}.obj", debug_prev_faces)
+            
             if eos:
                 print(f"EOS symbol emited, stack length: {len(stack)}")
-                nbEOSBeforeBreak -= 1
-                if nbEOSBeforeBreak <= 0 or len(stack)==0 :
-                  print("--> stopping generation")
-                  break
-                else :
-                  add_stack(edges=[cur_node['edges'][0], cur_node['edges'][1]], iAppendAtTheEnd=False)
+                break
+                # nbEOSBeforeBreak -= 1
+                # if nbEOSBeforeBreak <= 0 or len(stack)==0 :
+                #   print("--> stopping generation")
+                #   break
+                # else :
+                #   add_stack(edges=[cur_node['edges'][0], cur_node['edges'][1]])  #To restart again from this edge, later (--> False)
         
         print(f"Stack length after while/loop : {len(stack)}")
                 

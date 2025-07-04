@@ -3,28 +3,24 @@ import os
 import numpy as np
 import open3d as o3d
 import torch
-from accelerate import Accelerator
-from pathlib import Path
-from fns import center_vertices, normalize_vertices_scale, str2bool
-from utils.utils import GenerateAreaToRemesh, SaveAreaToRemeshInOBJ, ExtractRingsAroundTriangles, SaveOBJ, NormalizeSampleAndGridMesh
+from utils.utils import GenerateAreaToRemesh, SaveAreaToRemeshInOBJ, ExtractRingsAroundTriangles, SaveOBJ, NormalizeSampleAndGridMesh, AlignBoundaryWithVector
 from tokenizer import prepare_halfedge_mesh
 import trimesh
-import pyvista as pv
-import argparse
 import time
 
 
-def GenerateMeshToComplete(iMesh : o3d.geometry.TriangleMesh, iTriangleListToRemesh : list, iNbRingsAroundTrianglesToRemove = 1, iNbSamples = 8192, iDebugPrefixPath = "") :
+def GenerateMeshToComplete(iMesh : o3d.geometry.TriangleMesh, iTriangleListToRemesh : list, iNbRingsAroundTrianglesToRemove = 1, iNbSamples = 8192, iAlignBoundaryWithVector = None, iDebugPrefixPath = "") :
     
-    #--- Normalize and grid mesh
-    normalizedMesh, sampledPoints, triangleListToRemesh=NormalizeSampleAndGridMesh(iMesh, iTriangleListToRemesh, iNbSamples=iNbSamples)
-
     #--- Identify triangles to be removed
-    triangleListToRemesh=ExtractRingsAroundTriangles(normalizedMesh, triangleListToRemesh, iMaxRingSize=iNbRingsAroundTrianglesToRemove)
+    triangleListToRemesh=ExtractRingsAroundTriangles(iMesh, iTriangleListToRemesh, iMaxRingSize=iNbRingsAroundTrianglesToRemove)
 
-    # #--- Rotate the mesh to align the area to remesh with the vector (1, 1, 1)
-    # mesh = AlignBoundaryWithVector(mesh, TRIANGLES_TO_REMESH, vector=(0, 0, 1))
-    # o3d.io.write_triangle_mesh(OUTPUT_DIR+"/"+"AlignBoundaryWithVector_"+os.path.split(MESH_PATH)[1], mesh)
+    #--- Rotate the mesh to align the area to remesh with a specified direction
+    if iAlignBoundaryWithVector :
+      iMesh = AlignBoundaryWithVector(iMesh, triangleListToRemesh, iAlignBoundaryWithVector)
+      o3d.io.write_triangle_mesh(iDebugPrefixPath+"_AlignBoundaryWithVector.obj", iMesh)
+
+    #--- Normalize and grid mesh
+    normalizedMesh, sampledPoints, triangleListToRemesh=NormalizeSampleAndGridMesh(iMesh, list(triangleListToRemesh), iNbSamples=iNbSamples)
 
     #--- Reorder mesh elements
     he_mesh, _, _, triangleListToRemesh=prepare_halfedge_mesh(np.asarray(normalizedMesh.vertices), np.asarray(normalizedMesh.triangles, dtype=np.int32), triangleListToRemesh)
@@ -53,11 +49,11 @@ def GenerateMeshToComplete(iMesh : o3d.geometry.TriangleMesh, iTriangleListToRem
     return submesh, remeshBoundary, sampledPoints
 
 
-def GenerateMeshToCompleteFromPath(iMeshPath : str, iTriangleListToRemesh : list, iNbRingsAroundTrianglesToRemove = 1, iNbSamples = 8192, iDebugPrefixPath = "") :
+def GenerateMeshToCompleteFromPath(iMeshPath : str, iTriangleListToRemesh : list, iNbRingsAroundTrianglesToRemove = 1, iNbSamples = 8192, iAlignBoundaryWithVector = None, iDebugPrefixPath = "") :
     #--- Load and normalize mesh
     mesh = o3d.io.read_triangle_mesh(iMeshPath)
 
-    return GenerateMeshToComplete(mesh, iTriangleListToRemesh, iNbRingsAroundTrianglesToRemove, iNbSamples, iDebugPrefixPath)
+    return GenerateMeshToComplete(mesh, iTriangleListToRemesh, iNbRingsAroundTrianglesToRemove, iNbSamples, iAlignBoundaryWithVector, iDebugPrefixPath)
 
 
 def CompleteMesh(iTransformer : TreeMeshGPT, device,

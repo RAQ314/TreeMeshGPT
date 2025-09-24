@@ -1,0 +1,34 @@
+#version: "3.8"
+
+services:
+  tmgpt:
+    image: tmgpt:raq
+    container_name: "tmgpt_RAQ_GPU$GPU_ID"
+    #shm_size: '40gb'
+    build:
+      context: ..
+      #shm_size: '40gb'
+      dockerfile: ./.devcontainer/Dockerfile
+      args:
+        - CMAKE_CUDA_ARCHITECTURES="86"
+    stdin_open: true
+    tty: true
+    environment:
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,graphics
+      #DATA: $DATA
+      #DISPLAY: $DISPLAY
+    volumes:
+      #- $DATA:/data
+      - ../:/volume
+      #- $PITTSBURGH:/data/Pittsburgh250k
+    working_dir: /volume
+    command: /bin/bash
+    
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids : ["$GPU_ID"]
+              capabilities: [gpu]
+

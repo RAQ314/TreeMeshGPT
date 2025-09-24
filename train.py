@@ -11,8 +11,11 @@ torch._dynamo.config.optimize_ddp = False
 with open("configs/tmgpt.yaml","r") as f:
     config = yaml.load(f, Loader=yaml.FullLoader)
 
-TRAIN_PATH = "dummy_data/pkl"
-VAL_PATH = "dummy_data/pkl"
+# TRAIN_PATH = "dummy_data/pkl"
+# VAL_PATH = "dummy_data/pkl"
+
+TRAIN_PATH = "data/mesh_500/pkl"
+VAL_PATH = "data/mesh_500/pkl"
 
 quant_bit = config["quant_bit"]
 

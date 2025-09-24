@@ -21,6 +21,7 @@ from beartype import beartype
 from beartype.door import is_bearable
 from beartype.typing import Optional, Tuple, Type, List
 
+from torch.utils.tensorboard.writer import SummaryWriter
 
 #from meshgpt_pytorch.data import custom_collate
 #from meshgpt_pytorch.version import __version__
@@ -189,6 +190,9 @@ class MeshTransformerTrainer(Module):
         self.checkpoint_folder = Path(checkpoint_folder)
         self.checkpoint_folder.mkdir(exist_ok = True, parents = True)
 
+        # TensorBoard writer
+        self.tb_writer = SummaryWriter(str(self.checkpoint_folder / 'tb_logs'))
+
     def log(self, **data_kwargs):
         self.accelerator.log(data_kwargs, step = self.step.item())
 
@@ -277,6 +281,12 @@ class MeshTransformerTrainer(Module):
 
             self.print(f'step: {step} | loss_ce: {loss_ce.item():.4f} | | loss_l2: {l2_loss.item():.4f} lr: {self.optimizer.optimizer.param_groups[0]["lr"]}')
 
+
+            # TensorBoard logging
+            self.tb_writer.add_scalar("loss_ce", loss_ce.item(), step)
+            self.tb_writer.add_scalar("loss_l2", l2_loss.item(), step)
+            self.tb_writer.add_scalar("lr", self.optimizer.optimizer.param_groups[0]['lr'], step)
+
             self.log(
                 loss_ce = loss_ce.item(), 
                 loss_l2 = l2_loss.item(), 
@@ -322,8 +332,12 @@ class MeshTransformerTrainer(Module):
 
                 self.print(f'valid loss CE: {total_val_loss_ce:.4f} | valid loss L2: {total_val_loss_l2:.4f} ')
 
+
                 self.log(val_loss_ce = total_val_loss_ce,
                          val_loss_l2 = total_val_loss_l2)
+                # TensorBoard logging for validation
+                self.tb_writer.add_scalar("val_loss_ce", total_val_loss_ce, step)
+                self.tb_writer.add_scalar("val_loss_l2", total_val_loss_l2, step)
                 
                 self.unwrapped_model.train()
 
@@ -338,4 +352,5 @@ class MeshTransformerTrainer(Module):
 
             self.wait()
 
-        self.print('training complete')
+            self.print('training complete')
+            self.tb_writer.close()

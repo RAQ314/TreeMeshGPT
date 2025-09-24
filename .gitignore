@@ -1,7 +1,11 @@
 generation/
 wandb/
+output/
 *.pt
 *.mtl
 *.pyc
 *.ply
 .vscode/
+
+data/mesh_500
+tb_logs/

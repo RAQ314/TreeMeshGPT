@@ -1,6 +1,7 @@
 generation/
 wandb/
 output/
+dummy_data/mesh_500/
 *.pt
 *.mtl
 *.pyc

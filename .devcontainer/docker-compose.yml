@@ -11,6 +11,7 @@ services:
       dockerfile: ./.devcontainer/Dockerfile
       args:
         - CMAKE_CUDA_ARCHITECTURES="86"
+        - CONDA_ENV_NAME=$CONDA_ENV_NAME
     stdin_open: true
     tty: true
     environment:

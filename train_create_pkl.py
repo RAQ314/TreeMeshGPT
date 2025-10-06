@@ -5,9 +5,13 @@ import pickle
 MESH_IN = "dummy_data/mesh"
 PKL_OUT = "dummy_data/pkl"
 
+MESH_IN = "data/mesh_500/obj/train"
+PKL_OUT = "dummy_data/mesh_500/train/pkl"
+
 QUANT_BIT = 7
 N_TRIAL = 10
-MAX_N_FACES = 5500
+#MAX_N_FACES = 5500
+MAX_N_FACES = 1000
 AUGMENTATION = True
 
 mesh_fns = os.listdir(MESH_IN)

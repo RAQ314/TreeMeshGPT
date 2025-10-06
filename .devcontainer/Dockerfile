@@ -46,9 +46,17 @@ SHELL ["sh", "/tmp/conda_shell.sh"]
 # RUN conda env list >> /tmp/debug_conda.txt
 # RUN pip install numpy --no-cache-dir
 
+# #--- Patches to enable torch to use P6000 (arch 6.1)
+# #See : https://github.com/sasha0552/pascal-pkgs-ci
+# RUN pip install pipx
+# RUN pipx install transient-package
+# RUN pipx ensurepath
+# ENV PATH="$PATH:/root/.local/bin"
+# ENV PIP_EXTRA_INDEX_URL="https://sasha0552.github.io/pascal-pkgs-ci/"
+# RUN transient-package install --source triton --target triton-pascal
+
 #--- Install dependancies
 RUN pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124 --no-cache-dir
-#RUN pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
 
 COPY requirements.txt /tmp
 RUN pip install -r /tmp/requirements.txt --no-cache-dir   \

@@ -10,7 +10,7 @@ def manifold_trial(mesh_fn, quant_bit, is_augment):
     vertices, triangles = process_mesh(mesh_fn, augment = is_augment) # Open, augment, normalize mesh
     pc = sample_point_cloud(vertices, triangles, sampling='uniform') # Sample point cloud for training.
     vertices, triangles = quantize_remove_duplicates(vertices, triangles, quant_bit = quant_bit) # Quantize and remove duplicates
-    o3d_half_edge_mesh, vertices, n_faces = prepare_halfedge_mesh(vertices, triangles)
+    o3d_half_edge_mesh, vertices, n_faces, _ = prepare_halfedge_mesh(vertices, triangles)
     return o3d_half_edge_mesh, vertices, n_faces, pc
 
 def tokenize(mesh_fn, quant_bit, n_trial, max_n_faces, is_augment):

@@ -4,6 +4,7 @@ import random
 from scipy.spatial.transform import Rotation
 import open3d as o3d
 import trimesh
+import torch
 
 # Custom function to handle boolean arguments
 def str2bool(v):
@@ -40,7 +41,10 @@ def dequantize_verts_tensor(verts, n_bits=7):
     max_range = scale
     range_quantize = 2 ** n_bits - 1
 
-    verts = verts.float()
+    if torch.is_tensor(verts):
+        verts = verts.float()
+    else:
+        verts = np.asarray(verts, dtype=np.float32)
     verts = verts * (max_range - min_range) / range_quantize + min_range
 
     return verts
@@ -176,7 +180,7 @@ def quantize_remove_duplicates(vertices, triangles, quant_bit = 7):
     
     return vertices, triangles
 
-def prepare_halfedge_mesh(vertices, triangles):
+def prepare_halfedge_mesh(vertices, triangles, iTriangleIndicesToTrack=None):
     # sort vertices and faces
     sort_index = np.lexsort((vertices[:, 0], vertices[:, 1], vertices[:, 2]))
     vertices = vertices[sort_index]
@@ -186,7 +190,7 @@ def prepare_halfedge_mesh(vertices, triangles):
 
     mesh2 = o3d.geometry.TriangleMesh()
     mesh2.vertices = o3d.utility.Vector3dVector(vertices)
-    mesh2.triangles = o3d.utility.Vector3iVector(triangles)
+    mesh2.triangles = o3d.utility.Vector3iVector(triangles.astype(np.int32))
     hf_mesh = o3d.geometry.HalfEdgeTriangleMesh.create_from_triangle_mesh(mesh2)
 
     vertices = np.asarray(hf_mesh.vertices)
@@ -194,13 +198,23 @@ def prepare_halfedge_mesh(vertices, triangles):
     sort_index = np.lexsort((triangles[:, 0], triangles[:, 1], triangles[:, 2]))
     sorted_triangles = triangles[sort_index]
     sorted_triangles = sorted_triangles[:, [2,0,1]]
+    #newTrianglesIndicesToTrack=iTriangleIndicesToTrack[sort_index] if iTriangleIndicesToTrack is not None else None
+    newTrianglesIndicesToTrack = None
+    if iTriangleIndicesToTrack is not None:
+        newTrianglesIndicesToTrack=set()
+        # for index in iTriangleIndicesToTrack:
+        #     newTrianglesIndicesToTrack.add(sort_index[index])
+        for i in range(len(sort_index)):
+            if sort_index[i] in iTriangleIndicesToTrack:
+                newTrianglesIndicesToTrack.add(i)
     
     mesh3 = o3d.geometry.TriangleMesh()
     mesh3.vertices = o3d.utility.Vector3dVector(vertices)
     mesh3.triangles = o3d.utility.Vector3iVector(sorted_triangles)
     hf_mesh = o3d.geometry.HalfEdgeTriangleMesh.create_from_triangle_mesh(mesh3)
 
-    return hf_mesh, vertices, len(triangles)
+    return hf_mesh, vertices, len(triangles), newTrianglesIndicesToTrack
+
 
 def create_io_sequence(hf_mesh, stop_label = -1):
     hf_list = hf_mesh.half_edges

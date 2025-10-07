@@ -379,6 +379,8 @@ class TreeMeshGPT(Module):
             
         def initialize_with_existing_mesh(edges, acc_fea, pred, p, cache, first, t_init=1):
             
+            print("Starting initialization with existing mesh...")
+
             #--- RAQ : start prepare list of half edges for initialisation
             #Quantize vertices
             quantizedVertices=quantize_verts(np.asarray(halfEdgeTriangularMesh.vertices), self.quant_bit)
@@ -396,6 +398,9 @@ class TreeMeshGPT(Module):
             processedHalfEdges = set()
             stackOfExistingHE=[seed_he]
             while stackOfExistingHE :
+                
+                print(f"Stack length = {len(stackOfExistingHE)}")
+
                 he = stackOfExistingHE.pop()
                 if he in processedHalfEdges:
                     continue
@@ -491,6 +496,8 @@ class TreeMeshGPT(Module):
                     elif not nextNextHE in processedHalfEdges:
                       stackOfExistingHE.append(nextNextHE)  
           
+            print("End initialization with existing mesh")
+
             return edges, acc_fea, pred, p, cache, eos, first
             #--- RAQ : end
                 
